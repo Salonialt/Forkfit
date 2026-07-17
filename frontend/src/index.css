@@ -1,0 +1,71 @@
+@import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    --bg: #F9F8F6;
+    --card: #FFFFFF;
+    --primary: #4A6B53;
+    --primary-hover: #3D5844;
+    --terracotta: #D96C51;
+    --water: #7A9E9F;
+    --ochre: #D9A05B;
+    --text: #1E2B22;
+    --text-2: #5E7363;
+    --border: #E8E3DF;
+}
+
+body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+}
+
+.font-display { font-family: 'Manrope', sans-serif; }
+.font-body { font-family: 'IBM Plex Sans', sans-serif; }
+
+.eyebrow { font-size: 0.75rem; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; color: var(--terracotta); }
+
+.glass-nav { backdrop-filter: blur(20px) saturate(1.5); background: rgba(255,255,255,0.7); border-bottom: 1px solid rgba(255,255,255,0.4); }
+
+.clay-card { background: #fff; border: 1px solid var(--border); border-radius: 1rem; box-shadow: 4px 4px 16px rgba(30,43,34,0.03); transition: all .3s ease-out; }
+.clay-card:hover { transform: translateY(-2px); box-shadow: 4px 8px 24px rgba(30,43,34,0.06); }
+
+.pill-btn { border-radius: 9999px; padding: 0.65rem 1.5rem; font-weight: 600; transition: all .2s ease-out; }
+.pill-btn-primary { background: var(--primary); color: white; }
+.pill-btn-primary:hover { background: var(--primary-hover); transform: translateY(-1px); }
+.pill-btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+.pill-btn-ghost:hover { background: #f0ede9; }
+
+.input-clay {
+    background: white;
+    border: 1px solid var(--border);
+    border-radius: 0.75rem;
+    padding: 0.7rem 1rem;
+    font-family: 'IBM Plex Sans', sans-serif;
+    width: 100%;
+    transition: all .2s;
+    color: var(--text);
+}
+.input-clay:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(74,107,83,0.15); }
+
+.dotted-bg {
+    background-image: radial-gradient(circle, #E8E3DF 1px, transparent 1px);
+    background-size: 22px 22px;
+}
+
+@keyframes fade-up {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.fade-up { animation: fade-up .5s ease-out both; }
+.delay-1 { animation-delay: .08s; }
+.delay-2 { animation-delay: .16s; }
+.delay-3 { animation-delay: .24s; }
+.delay-4 { animation-delay: .32s; }
+
+::selection { background: var(--primary); color: white; }
