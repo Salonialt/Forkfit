@@ -49,7 +49,7 @@ The platform combines computer vision, large language models, and nutrition data
 * Automatically add grocery items to shopping carts.
 * Suggest in-stock alternatives when products are unavailable.
 
-### 📈 Dashboard
+### Dashboard
 
 * Daily calorie summary
 * Macronutrient distribution
@@ -119,7 +119,7 @@ fork_fit/
 ## Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/fork_fit.git
+git clone https://github.com/Salonialt/fork_fit.git
 cd fork_fit
 ```
 
