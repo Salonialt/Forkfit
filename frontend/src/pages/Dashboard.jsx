@@ -3,7 +3,59 @@ import { Link } from "react-router-dom";
 import { api } from "@/lib/api";
 import Layout from "@/components/Layout";
 import MacroRing from "@/components/MacroRing";
-import { Sparkles, Droplet, Plus, Camera, Utensils, MessageSquare, Trash2, Flame, Leaf, Brain, ChevronRight, Scale, TrendingDown, TrendingUp, Check } from "lucide-react";
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceLine } from "recharts";
+import { Sparkles, Droplet, Plus, Camera, Utensils, MessageSquare, Trash2, Flame, Leaf, Brain, ChevronRight, Scale, TrendingDown, TrendingUp, Check, CalendarDays } from "lucide-react";
+
+function formatDateLabel(dateString) {
+  return new Date(dateString).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function daysBetween(start, end) {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  return Math.max(1, Math.round((endDate - startDate) / (1000 * 60 * 60 * 24)));
+}
+
+function estimateGoalProgress(history, profile) {
+  if (!profile) return null;
+  const target = Number(profile.target_weight_kg);
+  const current = Number(profile.weight_kg);
+  if (!target || !current) return null;
+
+  const remainingKg = +(Math.abs(current - target)).toFixed(1);
+  if (remainingKg < 0.1) {
+    return { status: "done", text: "Target reached", weeklyChange: 0, remainingKg: 0 };
+  }
+
+  const sorted = [...history].sort((a, b) => new Date(a.date) - new Date(b.date));
+  if (sorted.length < 2) {
+    return { status: "needs-data", text: "Log at least 2 days to estimate target date", weeklyChange: 0, remainingKg };
+  }
+
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const totalDays = daysBetween(first.date, last.date);
+  const dailyChange = (Number(last.weight_kg) - Number(first.weight_kg)) / totalDays;
+  const weeklyChange = +(dailyChange * 7).toFixed(2);
+  const needsLoss = current > target;
+  const movingTowardGoal = needsLoss ? dailyChange < -0.01 : dailyChange > 0.01;
+
+  if (!movingTowardGoal) {
+    return { status: "off-track", text: "Current trend is not moving toward target", weeklyChange, remainingKg };
+  }
+
+  const daysToGoal = Math.ceil(Math.abs(current - target) / Math.abs(dailyChange));
+  const projected = new Date();
+  projected.setDate(projected.getDate() + daysToGoal);
+
+  return {
+    status: "projected",
+    text: projected.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
+    weeklyChange,
+    remainingKg,
+    daysToGoal,
+  };
+}
 
 function WeightPrompt({ profile, onLogged }) {
   const [status, setStatus] = useState({ logged: false, entry: null });
@@ -36,6 +88,14 @@ function WeightPrompt({ profile, onLogged }) {
   const targetDelta = profile ? +(profile.weight_kg - profile.target_weight_kg).toFixed(1) : 0;
   const goalIsLoss = profile?.goal?.includes("loss") || profile?.goal === "fat_loss";
   const trendGood = (goalIsLoss && goingDown) || (!goalIsLoss && !goingDown && delta !== 0);
+  const progress = estimateGoalProgress(history, profile);
+  const chartData = history.map((entry) => ({
+    date: entry.date,
+    label: formatDateLabel(entry.date),
+    weight: Number(entry.weight_kg),
+    target: Number(profile?.target_weight_kg),
+  }));
+  const hasChartData = chartData.length > 0;
 
   return (
     <div className="clay-card p-6 fade-up delay-1" data-testid="weight-card"
@@ -86,6 +146,86 @@ function WeightPrompt({ profile, onLogged }) {
           <div className="text-[10px] eyebrow" style={{ color: "var(--text-2)" }}>To goal</div>
           <div className="font-display font-bold text-lg" style={{ color: "var(--ochre)" }}>
             {targetDelta > 0 ? `-${targetDelta}` : targetDelta < 0 ? `+${Math.abs(targetDelta)}` : "✓"}
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 grid grid-cols-1 lg:grid-cols-[1fr_240px] gap-5 items-stretch">
+        <div className="rounded-lg border border-[#E8E3DF] bg-white p-3 min-h-[230px]" data-testid="weight-line-chart">
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div>
+              <div className="text-[10px] eyebrow" style={{ color: "var(--text-2)" }}>Progress graph</div>
+              <div className="text-sm font-semibold" style={{ color: "var(--text)" }}>Weight vs target</div>
+            </div>
+            <div className="text-xs" style={{ color: "var(--text-2)" }}>
+              {hasChartData ? `${chartData.length} logs` : "No logs yet"}
+            </div>
+          </div>
+          {hasChartData ? (
+            <div className="h-[178px]">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
+                  <CartesianGrid stroke="#EFEDE9" strokeDasharray="3 3" />
+                  <XAxis dataKey="label" tick={{ fontSize: 11, fill: "#6F746E" }} axisLine={false} tickLine={false} />
+                  <YAxis
+                    domain={[
+                      (dataMin) => Math.floor(Math.min(dataMin, Number(profile?.target_weight_kg)) - 1),
+                      (dataMax) => Math.ceil(Math.max(dataMax, Number(profile?.target_weight_kg)) + 1),
+                    ]}
+                    tick={{ fontSize: 11, fill: "#6F746E" }}
+                    axisLine={false}
+                    tickLine={false}
+                    width={46}
+                  />
+                  <Tooltip
+                    formatter={(value, name) => [`${Number(value).toFixed(1)} kg`, name === "weight" ? "Weight" : "Target"]}
+                    labelStyle={{ color: "#253128", fontWeight: 700 }}
+                    contentStyle={{ borderRadius: 8, border: "1px solid #E8E3DF" }}
+                  />
+                  <ReferenceLine y={Number(profile?.target_weight_kg)} stroke="#D9A05B" strokeDasharray="5 5" />
+                  <Line type="monotone" dataKey="weight" stroke="#4A6B53" strokeWidth={3} dot={{ r: 4, fill: "#4A6B53", strokeWidth: 0 }} activeDot={{ r: 6 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-[178px] flex items-center justify-center text-sm text-center px-6" style={{ color: "var(--text-2)" }}>
+              Log your weight to start the progress line.
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-lg p-4 flex flex-col justify-between" style={{ background: "#F4F2EE" }} data-testid="goal-forecast">
+          <div>
+            <div className="flex items-center gap-2">
+              <CalendarDays size={16} style={{ color: "var(--primary)" }} />
+              <span className="text-[10px] eyebrow" style={{ color: "var(--primary)" }}>Goal forecast</span>
+            </div>
+            <div className="font-display font-bold text-2xl mt-3" style={{ color: "var(--text)" }}>
+              {progress?.text || "Need profile"}
+            </div>
+            <p className="text-xs mt-2" style={{ color: "var(--text-2)" }}>
+              {progress?.status === "projected"
+                ? `At this trend, about ${progress.daysToGoal} days left.`
+                : progress?.status === "off-track"
+                  ? "Your recent logs show the trend needs adjustment."
+                  : progress?.status === "done"
+                    ? "You are already at your target weight."
+                    : "The estimate appears after enough logs."}
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2 mt-4">
+            <div className="rounded-lg bg-white p-2">
+              <div className="text-[10px] eyebrow" style={{ color: "var(--text-2)" }}>Weekly trend</div>
+              <div className="font-display font-bold text-lg" style={{ color: progress?.weeklyChange === 0 ? "var(--text-2)" : trendGood ? "var(--primary)" : "var(--terracotta)" }}>
+                {progress?.weeklyChange ? `${progress.weeklyChange > 0 ? "+" : ""}${progress.weeklyChange}` : "—"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-white p-2">
+              <div className="text-[10px] eyebrow" style={{ color: "var(--text-2)" }}>Remaining</div>
+              <div className="font-display font-bold text-lg" style={{ color: "var(--ochre)" }}>
+                {progress ? `${progress.remainingKg}kg` : "—"}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -178,7 +318,7 @@ export default function Dashboard() {
         <div className="clay-card p-6 lg:col-span-2 fade-up delay-3" data-testid="recs-card">
           <div className="flex items-center gap-2 mb-3">
             <Brain size={18} style={{ color: "var(--primary)" }} />
-            <span className="eyebrow">AI Recommendations</span>
+            <span className="eyebrow">Recommendations</span>
           </div>
           <ul className="space-y-2">
             {recs.map((r, i) => (

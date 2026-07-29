@@ -8,8 +8,11 @@ import uuid
 import json
 import base64
 import logging
+import math
+import re
 import bcrypt
 import jwt
+from collections import Counter
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Literal
 
@@ -138,6 +141,134 @@ def strip_code_fences(text: str) -> str:
     return text.strip()
 
 
+# ---------- Lightweight RAG helpers ----------
+RAG_CHUNK_SIZE = 900
+RAG_CHUNK_OVERLAP = 180
+RAG_TOP_K = 4
+RAG_EXTENSIONS = {".md", ".txt"}
+RAG_STOPWORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "can", "do", "for", "from",
+    "how", "i", "in", "is", "it", "me", "my", "of", "on", "or", "should", "that",
+    "the", "this", "to", "what", "when", "with", "you", "your",
+}
+RAG_KNOWLEDGE_DIRS = [
+    Path(p.strip()) for p in os.environ.get(
+        "RAG_KNOWLEDGE_DIRS",
+        f"{ROOT_DIR / 'knowledge'},{ROOT_DIR.parent / 'memory'}",
+    ).split(",")
+    if p.strip()
+]
+_rag_cache = {"signature": None, "chunks": []}
+
+
+def rag_tokenize(text: str) -> List[str]:
+    return [t for t in re.findall(r"[a-zA-Z][a-zA-Z0-9_'-]{1,}", text.lower()) if t not in RAG_STOPWORDS]
+
+
+def chunk_text(text: str, chunk_size: int = RAG_CHUNK_SIZE, overlap: int = RAG_CHUNK_OVERLAP) -> List[str]:
+    clean = re.sub(r"\s+", " ", text).strip()
+    if not clean:
+        return []
+    chunks = []
+    start = 0
+    while start < len(clean):
+        end = min(len(clean), start + chunk_size)
+        if end < len(clean):
+            boundary = clean.rfind(". ", start, end)
+            if boundary > start + chunk_size // 2:
+                end = boundary + 1
+        chunks.append(clean[start:end].strip())
+        if end >= len(clean):
+            break
+        start = max(0, end - overlap)
+    return chunks
+
+
+def discover_rag_files() -> List[Path]:
+    files = []
+    for directory in RAG_KNOWLEDGE_DIRS:
+        if not directory.exists():
+            continue
+        for path in directory.rglob("*"):
+            if path.is_file() and path.suffix.lower() in RAG_EXTENSIONS:
+                files.append(path)
+    return sorted(files)
+
+
+def load_rag_chunks() -> List[dict]:
+    files = discover_rag_files()
+    signature = tuple((str(path), path.stat().st_mtime_ns) for path in files)
+    if _rag_cache["signature"] == signature:
+        return _rag_cache["chunks"]
+
+    chunks = []
+    for path in files:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = path.read_text(encoding="latin-1")
+        except OSError as e:
+            logger.warning(f"Skipping RAG file {path}: {e}")
+            continue
+        for idx, chunk in enumerate(chunk_text(text)):
+            tokens = rag_tokenize(chunk)
+            if tokens:
+                chunks.append({
+                    "source": str(path.relative_to(ROOT_DIR.parent)) if path.is_relative_to(ROOT_DIR.parent) else str(path),
+                    "chunk_index": idx,
+                    "text": chunk,
+                    "tf": Counter(tokens),
+                    "length": len(tokens),
+                })
+
+    _rag_cache["signature"] = signature
+    _rag_cache["chunks"] = chunks
+    logger.info(f"Loaded {len(chunks)} RAG chunks from {len(files)} files")
+    return chunks
+
+
+def retrieve_rag_context(query: str, top_k: int = RAG_TOP_K) -> List[dict]:
+    chunks = load_rag_chunks()
+    if not chunks:
+        return []
+
+    query_tokens = rag_tokenize(query)
+    if not query_tokens:
+        return []
+
+    query_tf = Counter(query_tokens)
+    doc_count = len(chunks)
+    doc_freq = Counter()
+    for token in set(query_tokens):
+        doc_freq[token] = sum(1 for chunk in chunks if token in chunk["tf"])
+
+    scored = []
+    for chunk in chunks:
+        score = 0.0
+        for token, q_count in query_tf.items():
+            if token not in chunk["tf"]:
+                continue
+            idf = math.log((doc_count + 1) / (doc_freq[token] + 1)) + 1
+            score += q_count * chunk["tf"][token] * idf
+        if score > 0:
+            scored.append((score / math.sqrt(chunk["length"]), chunk))
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [
+        {"source": chunk["source"], "chunk_index": chunk["chunk_index"], "text": chunk["text"], "score": round(score, 4)}
+        for score, chunk in scored[:top_k]
+    ]
+
+
+def format_rag_context(retrieved: List[dict]) -> str:
+    if not retrieved:
+        return "No relevant local knowledge-base snippets were retrieved for this question."
+    blocks = []
+    for i, item in enumerate(retrieved, start=1):
+        blocks.append(f"[{i}] Source: {item['source']}#chunk-{item['chunk_index']}\n{item['text']}")
+    return "\n\n".join(blocks)
+
+
 # ---------- Models ----------
 class RegisterIn(BaseModel):
     email: EmailStr
@@ -188,6 +319,9 @@ class FoodLogIn(BaseModel):
 
 class WaterIn(BaseModel):
     amount_ml: int
+
+class WeightIn(BaseModel):
+    weight_kg: float = Field(gt=0, lt=400)
 
 class ChatIn(BaseModel):
     message: str
@@ -299,7 +433,7 @@ def macro_targets(target_cal: int, weight_kg: float, goal: str) -> dict:
 
 
 # ---------- Groq text helper (replaces the old Ollama call) ----------
-async def llm_text(system: str, prompt: str, json_mode: bool = False) -> str:
+async def llm_text(system: str, prompt: str, json_mode: bool = False, max_tokens: int = 1500) -> str:
     def do_call():
         kwargs = dict(
             model=CHAT_MODEL,
@@ -308,23 +442,32 @@ async def llm_text(system: str, prompt: str, json_mode: bool = False) -> str:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.4,
-            max_tokens=1500,
+            max_tokens=max_tokens,
         )
         if json_mode:
             # Constrains Groq's decoding so the output is guaranteed valid JSON syntax
             # (still your job to ensure the *shape* matches what you asked for).
             kwargs["response_format"] = {"type": "json_object"}
+            # gpt-oss-120b is a reasoning model — it spends part of max_tokens on
+            # internal "thinking" before writing the actual JSON. "low" keeps more
+            # of the budget for the real output (a previous "" failed_generation
+            # was this: reasoning ate the whole token budget, content came back empty).
+            kwargs["reasoning_effort"] = "low"
         return groq_client.chat.completions.create(**kwargs)
-    completion = groq_call_with_backoff(do_call)
+    try:
+        completion = groq_call_with_backoff(do_call)
+    except APIStatusError as e:
+        logger.error(f"Groq request failed: {e}")
+        raise HTTPException(status_code=502, detail=f"Groq API error: {e}")
     return completion.choices[0].message.content
 
 
-async def llm_json(system: str, prompt: str, max_attempts: int = 3) -> dict:
+async def llm_json(system: str, prompt: str, max_attempts: int = 3, max_tokens: int = 3000) -> dict:
     """Calls llm_text in JSON mode and parses the result, retrying on parse
     failure (rare, but LLMs occasionally still slip in a stray character)."""
     last_raw = None
     for attempt in range(max_attempts):
-        raw = await llm_text(system, prompt, json_mode=True)
+        raw = await llm_text(system, prompt, json_mode=True, max_tokens=max_tokens)
         last_raw = raw
         text = strip_code_fences(raw)
         try:
@@ -693,6 +836,56 @@ async def log_water(data: WaterIn, user: dict = Depends(get_current_user)):
     return doc
 
 
+# Weight tracking — one entry per day (re-logging the same day updates it)
+@api.get("/weight/today")
+async def weight_today(user: dict = Depends(get_current_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    entry = await db.weight_logs.find_one({"user_id": user["id"], "date": today}, {"_id": 0})
+    return {"logged": entry is not None, "entry": entry}
+
+
+@api.get("/weight/history")
+async def weight_history(user: dict = Depends(get_current_user)):
+    entries = await db.weight_logs.find({"user_id": user["id"]}, {"_id": 0}).sort("date", 1).to_list(365)
+    return {"entries": entries}
+
+
+@api.post("/weight/log")
+async def log_weight(data: WeightIn, user: dict = Depends(get_current_user)):
+    today = datetime.now(timezone.utc).date().isoformat()
+    now = datetime.now(timezone.utc).isoformat()
+
+    doc = {"id": str(uuid.uuid4()), "user_id": user["id"], "weight_kg": data.weight_kg,
+           "date": today, "logged_at": now}
+    await db.weight_logs.update_one(
+        {"user_id": user["id"], "date": today},
+        {"$set": {"weight_kg": data.weight_kg, "logged_at": now},
+         "$setOnInsert": {"id": doc["id"], "user_id": user["id"], "date": today}},
+        upsert=True,
+    )
+
+    # Keep the profile's weight (and derived BMR/TDEE/targets) in sync with the
+    # latest weigh-in, since the dashboard reads "current weight" from profile.
+    u = await db.users.find_one({"id": user["id"]}, {"_id": 0})
+    profile = (u or {}).get("profile")
+    if profile:
+        bmr = calc_bmr(profile["gender"], data.weight_kg, profile["height_cm"], profile["age"])
+        tdee = calc_tdee(bmr, profile["activity_level"])
+        target_cal = calc_target_calories(tdee, profile["goal"])
+        targets = macro_targets(target_cal, data.weight_kg, profile["goal"])
+        await db.users.update_one(
+            {"id": user["id"]},
+            {"$set": {
+                "profile.weight_kg": data.weight_kg,
+                "profile.bmr": round(bmr), "profile.tdee": round(tdee), "profile.targets": targets,
+                "profile.updated_at": now,
+            }},
+        )
+
+    entry = await db.weight_logs.find_one({"user_id": user["id"], "date": today}, {"_id": 0})
+    return entry
+
+
 # Grocery list
 @api.post("/grocery/generate")
 async def grocery_list(user: dict = Depends(get_current_user)):
@@ -837,16 +1030,22 @@ async def chat(data: ChatIn, user: dict = Depends(get_current_user)):
         {"user_id": user["id"], "session_id": sid}, {"_id": 0}
     ).sort("created_at", 1).to_list(50)
 
+    retrieved_context = retrieve_rag_context(data.message)
+    rag_context_text = format_rag_context(retrieved_context)
+
     system = (
         "You are ForkFit Coach, a supportive, evidence-based diet and nutrition assistant. "
         "You are warm, practical, and non-judgmental. Never diagnose medical or eating-disorder "
         "conditions — if symptoms suggest one, gently suggest a doctor or registered dietitian. "
         "Do not give precise numeric restriction plans to anyone showing signs of disordered eating. "
         "Keep responses concise (3-6 sentences) unless asked for something detailed like a meal plan. "
-        "Ground suggestions in the user's profile and targets when relevant."
+        "Ground suggestions in the user's profile and targets when relevant. "
+        "Use the retrieved knowledge-base context below when it is relevant. If the context does not "
+        "answer the question, say so briefly and rely on general nutrition guidance instead of inventing facts."
     )
     if profile:
         system += f"\n\nUser profile/targets: {json.dumps(profile.get('targets', {}))}, goal: {profile.get('goal')}"
+    system += f"\n\nRetrieved knowledge-base context:\n{rag_context_text}"
 
     messages = [{"role": "system", "content": system}]
     for m in history_docs:
@@ -872,7 +1071,14 @@ async def chat(data: ChatIn, user: dict = Depends(get_current_user)):
          "role": "assistant", "content": reply, "created_at": now},
     ])
 
-    return {"reply": reply, "session_id": sid}
+    return {
+        "reply": reply,
+        "session_id": sid,
+        "rag_sources": [
+            {"source": item["source"], "chunk_index": item["chunk_index"], "score": item["score"]}
+            for item in retrieved_context
+        ],
+    }
 
 
 @api.get("/chat/history")
@@ -925,6 +1131,7 @@ async def startup():
     await db.chat_messages.create_index([("user_id", 1), ("session_id", 1), ("created_at", 1)])
     await db.pantry_items.create_index([("user_id", 1), ("normalized_name", 1)], unique=True)
     await db.orders.create_index([("user_id", 1), ("created_at", -1)])
+    await db.weight_logs.create_index([("user_id", 1), ("date", 1)], unique=True)
     # Seed admin
     admin_email = os.environ.get("ADMIN_EMAIL", "admin@dietai.com").lower()
     admin_pw = os.environ.get("ADMIN_PASSWORD", "admin123")

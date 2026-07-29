@@ -42,7 +42,7 @@ export default function Chat() {
   return (
     <Layout>
       <div className="mb-6 fade-up">
-        <span className="eyebrow">Powered by Claude Sonnet 4.5</span>
+        <span className="eyebrow">Powered by Groq </span>
         <h1 className="font-display font-bold text-4xl sm:text-5xl mt-1" style={{ color: "var(--text)" }}>AI Nutrition Coach</h1>
       </div>
 

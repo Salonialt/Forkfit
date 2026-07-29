@@ -4,22 +4,22 @@
 AI-powered diet planner that creates personalized meal plans based on health profile, goals, dietary preferences. Features: profile, goals, AI food image recognition, BMR/TDEE calc, meal plan, nutrient tracking, AI chatbot coach, grocery list, weekly progress, smart recommendations.
 
 ## User choices (locked-in)
-- LLM: **Claude Sonnet 4.5** via Emergent Universal Key
-- Vision: **GPT-4o** via Emergent Universal Key
+- LLM: **Groq** via Emergent Universal Key
+- Vision: **Groq** via Emergent Universal Key
 - Auth: **JWT-based email/password** (httpOnly cookies + Bearer fallback)
 - Region: Global with regional options (Global, India, USA, Europe, East Asia, Middle East, Latin America)
 
 ## Architecture
 - Backend: FastAPI + Motor/MongoDB, `/api` prefix
 - Frontend: React 19 + react-router 7 + Tailwind + Shadcn primitives
-- LLM: `emergentintegrations` with `LlmChat` for both Claude (text) and GPT-4o (vision)
+- LLM: `LlmChat` for both GROQ (text) and GROQ (vision)
 
 ## What's implemented (Feb 2026 – initial build)
 - JWT auth: register / login / logout / me, bcrypt hashes, httpOnly cookies, admin seeded
 - 4-step onboarding (age/gender/region → metrics/activity → diet/conditions/allergies/budget → goal)
 - BMR (Mifflin–St Jeor), TDEE, calorie targeting, macro targets
-- AI meal plan generation (Claude Sonnet 4.5) — structured JSON
-- AI food image analysis (GPT-4o vision) with structured macros
+- AI meal plan generation (Groq) — structured JSON
+- AI food image analysis (Groq vision) with structured macros
 - Food + water logging, today's totals, delete entries
 - AI chatbot nutrition coach with persistent history
 - Grocery list auto-generated from latest meal plan
@@ -32,12 +32,10 @@ AI-powered diet planner that creates personalized meal plans based on health pro
 - Fitness enthusiasts tracking macros & meal prep
 
 ## Backlog (P1 — phase 2)
-- Weekly progress charts (weight, calories, macros over time) using Recharts
 - Voice food logging (Whisper)
 - Barcode scanner (open food facts)
 - Wearables sync (Apple Health / Google Fit)
 - Restaurant menu estimator
-- RAG-based nutrition knowledge base
 - Streaming chat responses (SSE)
 - Profile edit page + measurement log
 

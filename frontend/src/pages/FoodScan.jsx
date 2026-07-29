@@ -97,7 +97,7 @@ function UploadMode() {
         <span className="eyebrow">Result</span>
         {!result && !busy && <p className="text-sm mt-6" style={{ color: "var(--text-2)" }}>Upload an image and tap Analyze to see the nutrition breakdown.</p>}
         {err && <p className="text-sm mt-4 px-3 py-2 rounded-lg" style={{ background: "#FCE6DF", color: "#A4341B" }}>{err}</p>}
-        {busy && <p className="text-sm mt-6 animate-pulse" style={{ color: "var(--text-2)" }}>GPT-4o is identifying your meal…</p>}
+        {busy && <p className="text-sm mt-6 animate-pulse" style={{ color: "var(--text-2)" }}>Groq-4o is identifying your meal…</p>}
 
         {result && (
           <div className="mt-4">
@@ -338,7 +338,7 @@ export default function FoodScan() {
   return (
     <Layout>
       <div className="mb-6 fade-up">
-        <span className="eyebrow">Vision AI · GPT-4o</span>
+        <span className="eyebrow">Vision AI · Groq</span>
         <h1 className="font-display font-bold text-4xl sm:text-5xl mt-1" style={{ color: "var(--text)" }}>Snap your meal</h1>
         <p className="mt-2 text-base" style={{ color: "var(--text-2)" }}>
           Use the live camera for real-time diet-fit detection, or upload a single photo for a deep nutrition breakdown.

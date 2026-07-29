@@ -50,7 +50,7 @@ export default function MealPlan() {
 
       {busy && (
         <div className="clay-card p-12 text-center">
-          <div className="animate-pulse text-sm" style={{ color: "var(--text-2)" }}>Crafting your plan with Claude…</div>
+          <div className="animate-pulse text-sm" style={{ color: "var(--text-2)" }}>Crafting your plan with Groq…</div>
         </div>
       )}
 
