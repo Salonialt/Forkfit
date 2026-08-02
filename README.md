@@ -204,17 +204,12 @@ GROQ_API_KEY=your_groq_api_key
 
 # Screenshots
 
-Add application screenshots here.
-
-Example:
-
-```
-screenshots/
-├── login.png
-├── dashboard.png
-├── food-analysis.png
-├── meal-plan.png
-```
+<img width="1404" height="718" alt="Screenshot 2026-07-31 at 12 56 27 AM" src="https://github.com/user-attachments/assets/4ffb1eec-8d79-4775-bdb6-9894dfa760a4" />screenshots/
+<img width="1160" height="712" alt="Screenshot 2026-07-31 at 12 57 19 AM" src="https://github.com/user-attachments/assets/125864f6-a40a-4b5c-ba89-ed45ee0c778e" />
+<img width="1165" height="716" alt="Screenshot 2026-07-31 at 12 57 55 AM" src="https://github.com/user-attachments/assets/7438bb88-c328-41e4-9ea2-06749ddf42e9" />
+<img width="1149" height="709" alt="Screenshot 2026-07-31 at 12 58 27 AM" src="https://github.com/user-attachments/assets/64982138-964d-42ba-ae67-e79808ef2897" />
+<img width="1440" height="900" alt="Screenshot 2026-08-02 at 6 09 12 PM" src="https://github.com/user-attachments/assets/112ab7f5-43b0-4c28-bc60-69ee6cd4578e" />
+<img width="1159" height="696" alt="Screenshot 2026-07-31 at 12 59 21 AM" src="https://github.com/user-attachments/assets/d30ad0eb-dc54-4325-925a-c2ed95c351b4" />
 
 ---
 
