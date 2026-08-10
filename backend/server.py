@@ -141,6 +141,37 @@ def strip_code_fences(text: str) -> str:
     return text.strip()
 
 
+def extract_json_object(text: str) -> str:
+    """Extract the first balanced JSON object from model output.
+    Some reasoning vision models wrap JSON in <think> blocks or markdown fences."""
+    text = strip_code_fences(text)
+    start = text.find("{")
+    if start == -1:
+        return text
+
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start=start):
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return text[start:].strip()
+
+
 # ---------- Lightweight RAG helpers ----------
 RAG_CHUNK_SIZE = 900
 RAG_CHUNK_OVERLAP = 180
@@ -452,7 +483,6 @@ async def llm_text(system: str, prompt: str, json_mode: bool = False, max_tokens
             # internal "thinking" before writing the actual JSON. "low" keeps more
             # of the budget for the real output (a previous "" failed_generation
             # was this: reasoning ate the whole token budget, content came back empty).
-            kwargs["reasoning_effort"] = "low"
         return groq_client.chat.completions.create(**kwargs)
     try:
         completion = groq_call_with_backoff(do_call)
@@ -499,10 +529,11 @@ def llm_vision(system: str, prompt: str, image_b64: str, mime: str = "image/jpeg
                 },
             ],
             temperature=0.2,
-            max_tokens=1200,
+            max_tokens=2500,
         )
         if json_mode:
             kwargs["response_format"] = {"type": "json_object"}
+            kwargs["reasoning_effort"] = "none"
         return groq_client.chat.completions.create(**kwargs)
     completion = groq_call_with_backoff(do_call)
     return completion.choices[0].message.content
@@ -657,6 +688,26 @@ LOCALIZE_SYSTEM = (
 )
 
 
+def build_live_detect_system(diet: str, allergies: str, medical: str, goal: str) -> str:
+    return (
+        "You are a real-time food detection and nutrition assistant. Look at the image "
+        "and return the largest, clearest food or drink items visible. Estimate boxes, "
+        "names, nutrition, and whether each item fits the user's diet.\n"
+        f"User diet: {diet}. Allergies: {allergies}. Medical: {medical}. Goal: {goal}.\n"
+        "RULES for `fit`:\n"
+        "- false if it violates dietary preference or contains a listed allergen\n"
+        "- false if it is clearly unsuitable for the user's medical condition or goal\n"
+        "- true otherwise.\n"
+        "Return ONLY JSON, no markdown:\n"
+        "{\"items\":[{\"name\":\"...\",\"box\":{\"x\":0.0,\"y\":0.0,\"w\":0.0,\"h\":0.0},"
+        "\"calories\":int,\"protein_g\":number,\"carbs_g\":number,\"fat_g\":number,"
+        "\"confidence\":0.0,\"fit\":true,\"reason\":\"short why\"}]}\n"
+        "Box values are fractions from 0.0 to 1.0 of image width/height, origin top-left. "
+        f"Return at most {MAX_DETECTED_ITEMS} items. If no food is visible, return "
+        "{\"items\":[]}."
+    )
+
+
 def build_identify_system(diet: str, allergies: str, medical: str, goal: str) -> str:
     return (
         "You are a food identification and nutrition expert. You will be shown several "
@@ -693,52 +744,29 @@ async def detect_food(body: ImageAnalyzeIn, user: dict = Depends(get_current_use
         medical = ", ".join(profile.get("medical_conditions", [])) or "none"
         goal = profile.get("goal", "general")
 
-        # Stage 1: locate regions on the full image
+        # Live mode uses one compact vision request per frame. The upload flow can
+        # spend more tokens on deep analysis; live scanning must stay lightweight
+        # to avoid Groq image payload limits and rate-limit pressure.
+        live_system = build_live_detect_system(diet, allergies, medical, goal)
         raw = await asyncio.to_thread(
-            llm_vision, LOCALIZE_SYSTEM, "Locate the food regions and return the JSON described.",
+            llm_vision, live_system, "Detect visible food items and return the JSON described.",
             img_b64, body.mime, True,
         )
-        text = strip_code_fences(raw)
+        text = extract_json_object(raw)
         try:
-            localized = json.loads(text)
+            detected = json.loads(text)
         except json.JSONDecodeError:
-            logger.error(f"Localize parse: {text[:300]}")
+            logger.error(f"Live detect parse: {text[:300]}")
             return {"items": []}
-
-        boxes = localized.get("items", [])[:MAX_DETECTED_ITEMS]
-        if not boxes:
-            return {"items": []}
-
-        # Crop each box from the original image
-        image = decode_image(img_b64)
-        crops, valid_boxes = [], []
-        for it in boxes:
-            crop_b64 = crop_normalized_box(image, it.get("box") or {})
-            if crop_b64:
-                crops.append(crop_b64)
-                valid_boxes.append(it["box"])
-
-        if not crops:
-            return {"items": []}
-
-        # Stage 2: identify all crops in a single batched call
-        identify_system = build_identify_system(diet, allergies, medical, goal)
-        prompt = f"Identify each of the {len(crops)} food images shown, in order, and return the JSON described."
-        raw2 = await asyncio.to_thread(llm_vision_multi, identify_system, prompt, crops, "image/jpeg")
-        text2 = strip_code_fences(raw2)
-        try:
-            identified = json.loads(text2)
-        except json.JSONDecodeError:
-            logger.error(f"Identify parse: {text2[:300]}")
-            return {"items": []}
-
-        results = identified.get("items", [])
 
         items = []
-        for box, result in zip(valid_boxes, results):
+        for result in detected.get("items", [])[:MAX_DETECTED_ITEMS]:
             if not result or str(result.get("name", "unknown")).lower() == "unknown":
                 continue
+            box = result.get("box") or {}
             clamped_box = {k: max(0.0, min(1.0, float(box.get(k, 0)))) for k in ("x", "y", "w", "h")}
+            if clamped_box["w"] <= 0.01 or clamped_box["h"] <= 0.01:
+                continue
             items.append({
                 "name": result.get("name", "food"),
                 "box": clamped_box,
@@ -755,6 +783,17 @@ async def detect_food(body: ImageAnalyzeIn, user: dict = Depends(get_current_use
 
     except HTTPException:
         raise
+    except APIStatusError as e:
+        logger.error(f"Groq live detection failed: status={e.status_code} error={e}")
+        if e.status_code == 413:
+            raise HTTPException(413, "Live frame is too large. Try upload mode or reduce camera resolution.")
+        if e.status_code == 400:
+            raise HTTPException(502, "Groq could not process this live frame. Try better lighting or upload a photo.")
+        if e.status_code in (401, 403):
+            raise HTTPException(502, "Groq API key is invalid or does not have access to this vision model.")
+        if e.status_code == 429:
+            raise HTTPException(429, "Groq rate limit or credits issue. Live scan is slowing down.")
+        raise HTTPException(502, "Groq live vision API failed. Try again.")
     except Exception as e:
         # Catch-all so a bad frame NEVER kills the connection outright (which is
         # what shows up in the browser as a confusing CORS/net::ERR_FAILED error).
@@ -785,7 +824,20 @@ async def analyze_food_api(body: ImageAnalyzeIn, user: dict = Depends(get_curren
  "confidence": 0.0
 }"""
 
-    raw = llm_vision(system, prompt, img_b64, body.mime)
+    try:
+        raw = await asyncio.to_thread(llm_vision, system, prompt, img_b64, body.mime, True)
+    except APIStatusError as e:
+        logger.error(f"Groq food analysis failed: status={e.status_code} error={e}")
+        if e.status_code in (400, 413):
+            raise HTTPException(413, "Image is too large or invalid. Try a smaller, clearer image.")
+        if e.status_code in (401, 403):
+            raise HTTPException(502, "Groq API key is invalid or does not have access to this vision model.")
+        if e.status_code == 429:
+            raise HTTPException(429, "Groq rate limit or credits issue. Try again later or check billing.")
+        raise HTTPException(502, "Groq vision API failed. Try again.")
+    except Exception as e:
+        logger.error(f"Food analysis failed: {e}")
+        raise HTTPException(502, "Food analysis failed. Try again.")
     text = strip_code_fences(raw)
 
     try:

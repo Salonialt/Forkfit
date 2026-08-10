@@ -4,6 +4,34 @@ import Layout from "@/components/Layout";
 import { Camera, Upload, Sparkles, Check, Video, VideoOff, Image as ImageIcon } from "lucide-react";
 
 const MEAL_TYPES = ["breakfast", "lunch", "snack", "dinner"];
+const MAX_UPLOAD_IMAGE_SIDE = 1400;
+const UPLOAD_IMAGE_QUALITY = 0.82;
+const LIVE_SCAN_INTERVAL_MS = 8000;
+const LIVE_SCAN_ERROR_BACKOFF_MS = 16000;
+const LIVE_SCAN_FRAME_WIDTH = 360;
+const LIVE_SCAN_QUALITY = 0.5;
+
+function resizeImageForVision(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        const scale = Math.min(1, MAX_UPLOAD_IMAGE_SIDE / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", UPLOAD_IMAGE_QUALITY));
+      };
+      img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 
 function UploadMode() {
   const inputRef = useRef();
@@ -16,16 +44,17 @@ function UploadMode() {
   const [mealType, setMealType] = useState("snack");
   const [logged, setLogged] = useState(false);
 
-  const handleFile = (file) => {
+  const handleFile = async (file) => {
     if (!file) return;
-    setMime(file.type);
+    setMime("image/jpeg");
     setResult(null); setLogged(false); setErr("");
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      setPreview(e.target.result);
-      setImgB64(e.target.result.split(",")[1]);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const dataUrl = await resizeImageForVision(file);
+      setPreview(dataUrl);
+      setImgB64(dataUrl.split(",")[1]);
+    } catch {
+      setErr("Couldn't read this image. Try a JPEG or PNG file.");
+    }
   };
 
   const analyze = async () => {
@@ -179,31 +208,36 @@ function LiveMode() {
     setItems([]);
   }, []);
 
-  // Capture a frame and POST to /food/detect every ~2s
+  // Capture a frame and POST to /food/detect on a slow interval.
   const loop = async () => {
     let inFlight = false;
     while (activeRef.current) {
+      let delayMs = LIVE_SCAN_INTERVAL_MS;
       try {
         const v = videoRef.current;
         if (!v || v.readyState < 2 || inFlight) { await new Promise((r) => setTimeout(r, 500)); continue; }
         const cap = captureRef.current;
-        cap.width = 640;
-        cap.height = Math.round((v.videoHeight / v.videoWidth) * 640) || 480;
+        cap.width = LIVE_SCAN_FRAME_WIDTH;
+        cap.height = Math.round((v.videoHeight / v.videoWidth) * LIVE_SCAN_FRAME_WIDTH) || 270;
         const cx = cap.getContext("2d");
         cx.drawImage(v, 0, 0, cap.width, cap.height);
-        const dataUrl = cap.toDataURL("image/jpeg", 0.7);
+        const dataUrl = cap.toDataURL("image/jpeg", LIVE_SCAN_QUALITY);
         const b64 = dataUrl.split(",")[1];
         inFlight = true;
         setBusy(true);
         const { data } = await api.post("/food/detect", { image_base64: b64, mime: "image/jpeg" });
         setBusy(false);
         inFlight = false;
+        setErr("");
         if (activeRef.current) setItems(data.items || []);
       } catch (e) {
         setBusy(false);
         inFlight = false;
+        const detail = e.response?.data?.detail;
+        if (detail) setErr(typeof detail === "string" ? detail : "Live scan failed. Try again.");
+        delayMs = LIVE_SCAN_ERROR_BACKOFF_MS;
       }
-      await new Promise((r) => setTimeout(r, 2000));
+      await new Promise((r) => setTimeout(r, delayMs));
     }
   };
 
