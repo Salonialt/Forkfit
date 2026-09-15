@@ -54,9 +54,6 @@ db = mongo_client[DB_NAME]
 
 app = FastAPI()
 
-@app.get("/")
-def root():
-    return {"message": "API is running"}
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
