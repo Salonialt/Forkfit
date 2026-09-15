@@ -8,6 +8,7 @@ dependencies = [
     "python-dotenv",
     "bcrypt",
     "PyJWT",
+    "motor",
 ]
 
 [tool.vercel]
