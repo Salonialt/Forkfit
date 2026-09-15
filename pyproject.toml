@@ -10,6 +10,8 @@ dependencies = [
     "PyJWT",
     "motor",
     "groq",
+    "Pillow",
+
 ]
 
 [tool.vercel]
