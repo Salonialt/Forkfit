@@ -1,6 +1,7 @@
 [project]
-name = "fork-fit"
+name = "fastapi-app"
 version = "0.1.0"
+description = "FastAPI application"
 requires-python = ">=3.10"
 dependencies = [
     "fastapi",
@@ -8,4 +9,4 @@ dependencies = [
 ]
 
 [tool.vercel]
-entrypoint = "backend.server:app"
+entrypoint = "api.index:app"
