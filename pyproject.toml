@@ -7,6 +7,7 @@ dependencies = [
     "uvicorn",
     "python-dotenv",
     "bcrypt",
+    "PyJWT",
 ]
 
 [tool.vercel]
