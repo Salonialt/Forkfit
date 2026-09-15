@@ -53,6 +53,10 @@ mongo_client = AsyncIOMotorClient(MONGO_URL)
 db = mongo_client[DB_NAME]
 
 app = FastAPI()
+
+@app.get("/")
+def root():
+    return {"message": "API is running"}
 api = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO)
@@ -660,7 +664,6 @@ async def generate_meal_plan(user: dict = Depends(get_current_user)):
                 "created_at": datetime.now(timezone.utc).isoformat()}
     await db.meal_plans.insert_one(plan_doc)
     return {"id": plan_doc["id"], "plan": plan, "created_at": plan_doc["created_at"]}
-
 
 @api.get("/meal-plan/latest")
 async def latest_plan(user: dict = Depends(get_current_user)):
