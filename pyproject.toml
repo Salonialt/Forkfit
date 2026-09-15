@@ -9,6 +9,7 @@ dependencies = [
     "bcrypt",
     "PyJWT",
     "motor",
+    "groq",
 ]
 
 [tool.vercel]
